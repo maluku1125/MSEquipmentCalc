@@ -115,6 +115,7 @@ body[data-theme="light"] .grade-特殊{color:#1e88c7}
   color:var(--bad);border:1px solid var(--bad);background:var(--card2)}
 .notice b{color:var(--text)}
 .notice::before{content:"⚠ ";font-weight:700}
+.foot{text-align:center;color:var(--muted);font-size:.72rem;margin:18px 0 6px}
 /* 職業體系說明 */
 .buildnote{margin:0 0 10px;padding:7px 11px;border-radius:8px;font-size:.78rem;line-height:1.55;
   color:var(--muted);border-left:3px solid var(--accent);background:var(--card2)}
