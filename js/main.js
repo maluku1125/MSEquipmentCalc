@@ -755,7 +755,32 @@ const MANUAL_FIELDS = [
   ["mainUnique",  "不吃%主屬"],
   ["minorPct",    "副屬%"],
   ["minorUnique", "不吃%副屬"],
+  ["hpReal",      "HP 實際值(API 上限 50 萬)"],   // 僅惡魔復仇者顯示
 ];
+
+/* 依職業體系決定欄位名稱與說明 */
+function statLabels(bk) {
+  const d = Engine.BUILDS[bk] || Engine.BUILDS.str;
+  if (bk === "hp") return {
+    main: "HP", minor: "STR", mainPct: "HP%", minorPct: "STR%", hasMinor: true,
+    note: "惡魔復仇者:屬性 = 0.8 ×(HP ÷ 3.5)+ STR,1 點 STR 約等於 4.38 點 HP。" +
+          "主屬欄位一律填 HP;全屬類 buff 只會加到 STR,不會加到 HP。",
+  };
+  if (bk === "xenon") return {
+    main: "三屬合計", minor: "", mainPct: "全屬%", minorPct: "", hasMinor: false,
+    note: "傑諾:屬性 = 4 ×(STR + DEX + LUK),沒有副屬。「全屬%」欄位填三屬共通的百分比。" +
+          "變化量的「三屬合計」請填三項加總(裝備給全屬 +30 就填 90;只給 DEX +200 則填 200);" +
+          "若是只作用於單一屬性的百分比(如 STR% +10),請改用下方⑤的「STR/DEX/LUK ±%(單屬)」欄位。",
+  };
+  const M = d.main.join("+"), N = d.minor.join("+");
+  return {
+    main: `主屬(${M})`, minor: `副屬(${N})`,
+    mainPct: `主屬%(${M})`, minorPct: `副屬%(${N})`, hasMinor: true,
+    note: d.minor.length > 1
+      ? `屬性 = 4 × ${M} + (${N})。副屬為兩項之和,若 ${d.minor[0]}% 與 ${d.minor[1]}% 不同,請填加權平均。`
+      : `屬性 = 4 × ${M} + ${N}。`,
+  };
+}
 // 爆發相關(獨立一列)
 const BURST_FIELDS = [
   ["burst",    "估計爆發占比%(10~90)"],
@@ -773,7 +798,10 @@ const MANUAL_IMPACT = {
   minorPct:    "副屬裸值無法反推,「副屬 ±%」會直接乘面板值而偏高",
   minorUnique: "不吃%的副屬視為 0,裸值反推會偏高",
   burst:       "爆發期加權失效,規範戒指/靈魂契約將完全不列入計算",
+  hpReal:      "API 的 HP 上限為 50 萬,若實際血量更高會被低估(未超過 50 萬則可不填)",
 };
+// 有預設值或視情況才需填的欄位,不列入未填警告
+const MANUAL_SKIP_WARN = new Set(["hpReal"]);
 const DELTA_FIELDS = [
   ["mainFlat",    "主屬 ±(吃%)"],
   ["mainPct",     "主屬 ±%"],
@@ -787,7 +815,12 @@ const DELTA_FIELDS = [
   ["boss",        "BOSS傷 ±%"],
   ["crit",        "爆傷 ±%"],
   ["ignore",      "無視防禦 ±%(乘算)"],
+  // 傑諾專用:單一屬性%(只作用於該屬性,不像全屬%三項都吃)
+  ["strPct",      "STR ±%(單屬)"],
+  ["dexPct",      "DEX ±%(單屬)"],
+  ["lukPct",      "LUK ±%(單屬)"],
 ];
+const XENON_PCT_FIELDS = ["strPct", "dexPct", "lukPct"];
 const FACTOR_LABELS = {
   attribute: "屬性", attackFlat: "攻擊力", attackPct: "攻擊%",
   dmgBoss: "傷害+BOSS", crit: "爆傷", finalDmg: "終傷", ignore: "無視防禦",
@@ -819,14 +852,85 @@ function setupSimulation(basic, stat) {
         const opts = Object.entries(B).map(([k, v]) =>
           `<option value="${k}" ${k === build ? "selected" : ""}>${v.label}</option>`).join("");
         grid.insertAdjacentHTML("beforeend",
-          `<div class="field"><label>${label}(自動判定,可修改)</label><select id="base_${id}">${opts}</select></div>`);
+          `<div class="field" id="f_base_${id}"><label>${label}(自動判定,可修改)</label>` +
+          `<select id="base_${id}">${opts}</select></div>`);
       } else {
         grid.insertAdjacentHTML("beforeend",
-          `<div class="field"><label>${label}</label><input type="number" step="any" id="base_${id}"></div>`);
+          `<div class="field" id="f_base_${id}"><label>${label}</label>` +
+          `<input type="number" step="any" id="base_${id}"></div>`);
       }
     }
   }
-  $("base_build").onchange = fillBaseline;
+  // 依職業體系套用欄位名稱、隱藏無用欄位、顯示說明
+  function applyBuildLabels() {
+    const L = statLabels($("base_build").value);
+    const setLabel = (wrapId, text) => {
+      const el = $(wrapId);
+      if (el && el.firstElementChild) el.firstElementChild.textContent = text;
+    };
+    setLabel("f_manual_mainPct",     L.mainPct);
+    setLabel("f_manual_mainUnique",  `不吃%${L.main}`);
+    setLabel("f_manual_minorPct",    L.minorPct);
+    setLabel("f_manual_minorUnique", `不吃%${L.minor}`);
+    setLabel("f_delta_mainFlat",     `${L.main} ±(吃%)`);
+    setLabel("f_delta_mainPct",      `${L.mainPct} ±`);
+    setLabel("f_delta_mainUnique",   `不吃%${L.main} ±`);
+    setLabel("f_delta_minorFlat",    `${L.minor} ±(吃%)`);
+    setLabel("f_delta_minorPct",     `${L.minorPct} ±`);
+    setLabel("f_delta_minorUnique",  `不吃%${L.minor} ±`);
+    // HP 實際值欄位只對惡魔復仇者顯示
+    const hpField = $("f_manual_hpReal");
+    if (hpField) hpField.classList.toggle("hidden", $("base_build").value !== "hp");
+
+    // 單屬性%欄位只對傑諾顯示(其他職業用「主屬%/副屬%」即可)
+    const isXenon = $("base_build").value === "xenon";
+    for (const id of XENON_PCT_FIELDS) {
+      const el = $("f_delta_" + id);
+      if (!el) continue;
+      el.classList.toggle("hidden", !isXenon);
+      if (!isXenon) { const inp = el.querySelector("input"); if (inp) inp.value = ""; }
+    }
+
+    // 傑諾沒有副屬 → 隱藏相關欄位並清空,避免誤填
+    for (const id of ["f_manual_minorPct", "f_manual_minorUnique",
+                      "f_delta_minorFlat", "f_delta_minorPct", "f_delta_minorUnique"]) {
+      const el = $(id);
+      if (!el) continue;
+      el.classList.toggle("hidden", !L.hasMinor);
+      if (!L.hasMinor) { const inp = el.querySelector("input"); if (inp) inp.value = ""; }
+    }
+    // ⑤基準值欄位也跟著改名
+    setLabel("f_base_mainFinal",  `${L.main}(最終值)`);
+    setLabel("f_base_minorFinal", `${L.minor}(最終值)`);
+    const bf = $("f_base_minorFinal");
+    if (bf) bf.classList.toggle("hidden", !L.hasMinor);
+
+    const note = $("buildNote");
+    if (note) note.textContent = L.note;
+    updateHpCapWarn();
+  }
+
+  // 惡魔復仇者:API 的 HP 受遊戲血條上限影響,超過 50 萬會被截斷
+  function updateHpCapWarn() {
+    const warn = $("hpCapWarn");
+    if (!warn) return;
+    const isHp = $("base_build").value === "hp";
+    warn.classList.toggle("hidden", !isHp);
+    if (!isHp) return;
+    const api = Engine.sumStats(state.statMap || {}, ["HP"]);
+    const filled = parseFloat(($("manual_hpReal") || {}).value) || 0;
+    warn.innerHTML =
+      "因 API 限制,<b>HP 超過 50 萬請自行填入</b>。" +
+      "<br>API 讀到的 HP 受遊戲內血條上限截斷(實際血量可能更高)," +
+      "請於③手動填入的「HP 實際值」欄位輸入真實血量,否則屬性會被低估。" +
+      (filled > 0
+        ? `<br>目前已改用你填入的 <b>${filled.toLocaleString()}</b> 計算(API 讀到 ${api.toLocaleString()})。`
+        : api >= 499000
+          ? `<br><b>API 讀到 ${api.toLocaleString()},已達上限,極可能被截斷。</b>`
+          : `<br>API 讀到 ${api.toLocaleString()},未達上限,可不必填寫。`);
+  }
+
+  $("base_build").onchange = () => { applyBuildLabels(); fillBaseline(); };
 
   // 目標BOSS防禦%:依角色記憶,不隨 buff/基準值重算而被覆寫
   const targetKey = "msec_target_" + (basic.character_name || "");
@@ -864,7 +968,11 @@ function setupSimulation(basic, stat) {
     const minorFlatBuff = allFlat * def.minor.length + (t.sub || 0)
       + (def.minor.length > 1 ? (t.sub2 || 0) : 0);
 
-    const mainClear  = Engine.deriveClear(Engine.sumStats(m, def.main),  mainPctM,  mainUq);
+    // 惡魔復仇者:API 的 HP 上限 50 萬,使用者可於③填入實際值覆寫
+    const hpReal = gvm("hpReal");
+    const apiMain = (hpBuild && hpReal > 0) ? hpReal : Engine.sumStats(m, def.main);
+
+    const mainClear  = Engine.deriveClear(apiMain,  mainPctM,  mainUq);
     const minorClear = Engine.deriveClear(Engine.sumStats(m, def.minor), minorPctM, minorUq);
     setV("mainFinal",  r((mainClear  + mainFlatBuff)  * (1 + mainPctM  + mainAllP) + mainUq));
     setV("minorFinal", r(def.minor.length
@@ -888,6 +996,7 @@ function setupSimulation(basic, stat) {
     state.hpBuild  = hpBuild;
     state.buffFlat = { main: mainFlatBuff, minor: minorFlatBuff, atk: t.atk || 0 };
     updateDerivedClear();
+    updateHpCapWarn();
     // 基準值變動 → 方案增幅與 buff 升等效益一併重算
     if (state.planKey) renderPlans();
     if (state.buffReady) BuffUI.redrawActive();
@@ -904,7 +1013,8 @@ function setupSimulation(basic, stat) {
     grid.innerHTML = "";
     for (const [id, label] of fields) {
       grid.insertAdjacentHTML("beforeend",
-        `<div class="field"><label>${label}</label><input type="number" step="any" id="manual_${id}" placeholder="${id === "burstSec" ? "20" : "0"}"></div>`);
+        `<div class="field" id="f_manual_${id}"><label>${label}</label>` +
+        `<input type="number" step="any" id="manual_${id}" placeholder="${id === "burstSec" ? "20" : "0"}"></div>`);
       const v = saved[id] != null ? saved[id] : MANUAL_DEFAULTS[id];
       if (v != null) $("manual_" + id).value = v;
     }
@@ -927,23 +1037,17 @@ function setupSimulation(basic, stat) {
   $("base_mainFinal").addEventListener("input", updateDerivedClear);
   $("base_minorFinal").addEventListener("input", updateDerivedClear);
 
-  // 手動欄位就緒後才載入 Buff(規範戒指需讀取爆發占比),最後才帶入基準值
-  state.buffReady = false;
-  BuffUI.init(basic.character_name, m, basic.character_class);
-  fillBaseline();
-  state.buffReady = true;
-  BuffUI.redrawActive();
-  updateDerivedClear();
-  updateManualWarn();
+  // 初始化流程移至所有欄位(含變化量)建立之後,見本函式末端 bootstrap()
 
   // 未填欄位提示
   function updateManualWarn() {
     const empty = [];
     for (const [id, label] of [...MANUAL_FIELDS, ...BURST_FIELDS]) {
       const el = $("manual_" + id);
+      const skip = MANUAL_OPTIONAL.has(id) || MANUAL_SKIP_WARN.has(id);
       const blank = !el || el.value.trim() === "";
-      if (el) el.classList.toggle("unfilled", blank && !MANUAL_OPTIONAL.has(id));
-      if (blank && !MANUAL_OPTIONAL.has(id)) empty.push([id, label]);
+      if (el) el.classList.toggle("unfilled", blank && !skip);
+      if (blank && !skip) empty.push([id, label]);
     }
     const box = $("manualWarn");
     if (!empty.length) { box.classList.add("hidden"); return; }
@@ -978,7 +1082,8 @@ function setupSimulation(basic, stat) {
   dg.innerHTML = "";
   for (const [id, label] of DELTA_FIELDS)
     dg.insertAdjacentHTML("beforeend",
-      `<div class="field"><label>${label}</label><input type="number" step="any" id="delta_${id}" placeholder="0"></div>`);
+      `<div class="field" id="f_delta_${id}"><label>${label}</label>` +
+      `<input type="number" step="any" id="delta_${id}" placeholder="0"></div>`);
 
   // 終傷即時預覽
   const fdPreview = () => {
@@ -1003,6 +1108,17 @@ function setupSimulation(basic, stat) {
     fdPreview();
     $("resultBox").classList.add("hidden");
   };
+
+  // 所有欄位(基準值/手動填入/變化量)都建立完成後才初始化,
+  // 否則依職業套用的標籤會被後建立的欄位覆蓋
+  state.buffReady = false;
+  applyBuildLabels();
+  BuffUI.init(basic.character_name, m, basic.character_class);
+  fillBaseline();
+  state.buffReady = true;
+  BuffUI.redrawActive();
+  updateDerivedClear();
+  updateManualWarn();
 }
 
 /* ---------- 共用計算入口 ---------- */
@@ -1072,13 +1188,31 @@ function readRawDelta() {
 function toDelta(raw) {
   const g = (k) => parseFloat(raw[k]) || 0;
   const pct = (v) => v / 100;
-  return {
+  const d = {
     mainFlat: g("mainFlat"), mainPct: pct(g("mainPct")), mainUnique: g("mainUnique"),
     minorFlat: g("minorFlat"), minorPct: pct(g("minorPct")), minorUnique: g("minorUnique"),
     attackFlat: g("attackFlat"), attackPct: pct(g("attackPct")),
     dmg: pct(g("dmg")), boss: pct(g("boss")), crit: pct(g("crit")),
     ignore: pct(g("ignore")), fdFrom: pct(g("fdFrom")), fdTo: pct(g("fdTo")),
   };
+
+  // 傑諾:單一屬性%只作用於該屬性,不能直接套用在三屬合計上。
+  //   STR% +p 的效果 = 該屬性裸值 × p,且此增量已在%之後,故計入「不吃%」。
+  //   各屬裸值以面板值比例分攤總裸值估算。
+  if (($("base_build") || {}).value === "xenon") {
+    const m = state.statMap || {};
+    const total = (m.STR || 0) + (m.DEX || 0) + (m.LUK || 0);
+    if (total > 0) {
+      const gvm = (id) => parseFloat(($("manual_" + id) || {}).value) || 0;
+      const totalPct = gvm("mainPct") / 100 + (state.buffAllP || 0) / 100;
+      const clear = Engine.deriveClear(total, totalPct, gvm("mainUnique"));
+      for (const [key, stat] of [["strPct", "STR"], ["dexPct", "DEX"], ["lukPct", "LUK"]]) {
+        const p = pct(g(key));
+        if (p) d.mainUnique += clear * ((m[stat] || 0) / total) * p;
+      }
+    }
+  }
+  return d;
 }
 
 function runSimulation() {

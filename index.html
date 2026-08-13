@@ -86,6 +86,7 @@
   <div class="card hidden" id="cardManual">
     <h2 id="hManual"><span class="stepno"></span>手動填入 <span class="baseline-tag">API 無法取得的數值</span></h2>
     <div style="margin-bottom:6px;font-size:.85rem;color:var(--muted)">請照面板/裝備自行加總;會依角色名記住填寫值</div>
+    <div class="buildnote" id="buildNote"></div>
     <div class="simgrid" id="manualGrid"></div>
     <div class="hint" id="derivedClear"></div>
 
@@ -117,6 +118,8 @@
   <!-- 模擬 -->
   <div class="card hidden" id="cardSim">
     <h2 id="hSim"><span class="stepno"></span>模擬設定 <span class="baseline-tag">基準值可手動修正</span></h2>
+
+    <div class="notice hidden" id="hpCapWarn"></div>
 
     <div style="margin-bottom:6px;font-size:.85rem;color:var(--muted)">基準值(自動帶入 API 資料)</div>
     <div class="simgrid" id="baseGrid"></div>
