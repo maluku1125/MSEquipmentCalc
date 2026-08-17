@@ -378,10 +378,19 @@ const BuffUI = (() => {
     return b.dur || burstWindow();
   }
 
+  // 爆發期的「傷害占比」(職業特性)
   function burstRatio() {
     const el = $("manual_burst");
     const v = el ? parseFloat(el.value) : NaN;
     return (Number.isFinite(v) ? Math.min(Math.max(v, 0), 100) : 0) / 100;
+  }
+  // 爆發週期固定 120 秒(遊戲機制,所有職業一致)
+  const BURST_CYCLE = 120;
+  const burstCycle = () => BURST_CYCLE;
+  // 單一技能在爆發窗/平砍期的覆蓋率
+  function coverageOf(b, v) {
+    return Engine.skillCoverage(durationOf(b, v), b.cd || burstCycle(),
+                                burstWindow(), burstCycle(), !b.loose);
   }
 
   /**
@@ -395,7 +404,6 @@ const BuffUI = (() => {
   function totals(onlyBurst) {
     const out = {};
     if (mode === "cold") return out;
-    const p = burstRatio(), W = burstWindow();
     for (const [cat] of CATS)
       for (const b of BUFF_DATA[cat] || []) {
         const v = state[bid(cat, b)];
@@ -403,10 +411,8 @@ const BuffUI = (() => {
         const eff = effectAt(b, v);
         let k;
         if (b.burst) {
-          const D = durationOf(b, v);
-          k = onlyBurst
-            ? Math.min(D, W) / W
-            : (p > 0 && p < 1 ? p * Math.max(D - W, 0) / (W * (1 - p)) : 0);
+          const c = coverageOf(b, v);
+          k = onlyBurst ? c.cover : c.spill;
         } else {
           k = onlyBurst ? 0 : 1;
         }
@@ -451,7 +457,6 @@ const BuffUI = (() => {
     if (!cur) return null;                       // 未啟用不試算
     const max = lv[lv.length - 1];
     if (cur >= max) return null;
-    const W = burstWindow();
     const diff = {};
     const a = effectAt(b, cur), z = effectAt(b, max);
     for (const k of new Set([...Object.keys(a), ...Object.keys(z)])) {
@@ -460,17 +465,13 @@ const BuffUI = (() => {
     }
     if (!Object.keys(diff).length) return null;
     if (b.burst) {
-      // 爆發專用:僅作用於爆發窗,依覆蓋率折算;超出部分溢出到平時
-      const p = burstRatio();
-      const Da = durationOf(b, cur), Dz = durationOf(b, max);
-      const coverZ = Math.min(Dz, W) / W, coverA = Math.min(Da, W) / W;
-      const spillZ = (p > 0 && p < 1) ? p * Math.max(Dz - W, 0) / (W * (1 - p)) : 0;
-      const spillA = (p > 0 && p < 1) ? p * Math.max(Da - W, 0) / (W * (1 - p)) : 0;
-      const zEff = effectAt(b, max), aEff = effectAt(b, cur);
+      // 爆發專用:窗內與平砍期各自依覆蓋率折算
+      const ca = coverageOf(b, cur), cz = coverageOf(b, max);
+      const aEff = effectAt(b, cur), zEff = effectAt(b, max);
       const burstDelta = {}, normDelta = {};
       for (const k of new Set([...Object.keys(aEff), ...Object.keys(zEff)])) {
-        const vb = (zEff[k] || 0) * coverZ - (aEff[k] || 0) * coverA;
-        const vn = (zEff[k] || 0) * spillZ - (aEff[k] || 0) * spillA;
+        const vb = (zEff[k] || 0) * cz.cover - (aEff[k] || 0) * ca.cover;
+        const vn = (zEff[k] || 0) * cz.spill - (aEff[k] || 0) * ca.spill;
         if (vb) burstDelta[k] = vb;
         if (vn) normDelta[k] = vn;
       }
@@ -490,17 +491,18 @@ const BuffUI = (() => {
 
   // 爆發技能明細(供介面顯示換算過程)
   function burstDetail() {
-    const p = burstRatio(), W = burstWindow(), rows = [];
+    const rows = [];
     for (const [cat] of CATS)
       for (const b of BUFF_DATA[cat] || []) {
         if (!b.burst) continue;
         const v = state[bid(cat, b)];
         if (!v) continue;
         const D = durationOf(b, v);
-        const cover = Math.min(D, W) / W;
-        const spill = (p > 0 && p < 1) ? p * Math.max(D - W, 0) / (W * (1 - p)) : 0;
-        const eff = effectAt(b, v);
-        rows.push({ name: b.n, dur: Math.round(D * 10) / 10, cover, spill, eff });
+        const c = coverageOf(b, v);
+        rows.push({
+          name: b.n, dur: Math.round(D * 10) / 10, cd: b.cd || burstCycle(),
+          loose: !!b.loose, ...c, eff: effectAt(b, v),
+        });
       }
     return rows;
   }
@@ -594,8 +596,9 @@ const BuffUI = (() => {
         <span class="bn">${esc(b.n)}${own ? ` <span class="bown" title="你自己職業提供的連結技能">自身</span>` : ""}` +
         `${b.job ? ` <span class="bjob">${esc(b.job)}</span>` : ""}</span>`;
       if (b.np) html += `<span class="bnp" title="非常駐技能,以等效值計算">等效</span>`;
+      const lvTag = b.lvName || "Lv";           // 魂武用「階」而非 Lv
       if (lv) html += `<select>${lv.map(l =>
-        `<option value="${l}" ${Number(state[key]) === l ? "selected" : ""}>Lv${l}</option>`).join("")}</select>`;
+        `<option value="${l}" ${Number(state[key]) === l ? "selected" : ""}>${lvTag}${l}</option>`).join("")}</select>`;
       row.innerHTML = html;
 
       // 升到滿等的增幅(僅對已啟用且未滿等者顯示)
@@ -604,7 +607,7 @@ const BuffUI = (() => {
         const g = document.createElement("span");
         g.className = "bgain";
         g.textContent = `滿等 +${gain.toFixed(2)}%`;
-        g.title = `由 Lv${state[key]} 升到 Lv${lv[lv.length - 1]} 的總增幅`;
+        g.title = `由 ${lvTag}${state[key]} 升到 ${lvTag}${lv[lv.length - 1]} 的總增幅`;
         row.appendChild(g);
       }
       const cb = row.querySelector("input"), sel = row.querySelector("select");
@@ -674,18 +677,22 @@ const BuffUI = (() => {
     const rows = burstDetail(), box = $("burstDetail");
     if (!rows.length || mode === "cold") { box.classList.add("hidden"); return; }
     box.classList.remove("hidden");
-    const p = burstRatio(), W = burstWindow();
+    const q = burstRatio(), W = burstWindow(), C = burstCycle();
     const fmtEff = (e, k) => Object.entries(e)
       .map(([s, n]) => `${LABELS[s] || s} ${Math.round(n * k * 100) / 100}${PCT.has(s) ? "%" : ""}`).join("、");
+    // 由傷害占比與時間反推爆發期的 DPS 倍率,供使用者檢核填的值是否合理
+    const dps = (q > 0 && q < 1 && W > 0 && W < C)
+      ? (q / (1 - q)) / (W / (C - W)) : null;
     box.innerHTML =
-      `<b>爆發窗 ${W} 秒</b>　覆蓋率 = min(持續, ${W}) ÷ ${W}` +
-      `　溢出平砍 = p × max(持續−${W}, 0) ÷ (${W} × (1−p))　` +
-      `<span style="color:var(--muted)">p = 爆發占比 = ${(p * 100).toFixed(0)}%</span><br>` +
+      `<b>爆發週期 ${C} 秒、爆發窗 ${W} 秒、傷害占比 ${(q * 100).toFixed(0)}%</b>` +
+      (dps ? `　<span style="color:var(--muted)">→ 爆發期 DPS 約為平砍的 ${dps.toFixed(1)} 倍</span>` : "") +
+      `<br><span style="color:var(--muted)">每輪次數 = ⌊${C} ÷ 冷卻⌋;窗內覆蓋 = 觸發落在爆發窗的秒數 ÷ ${W};` +
+      `其餘落在平砍期 ÷ ${C - W}</span><br>` +
       rows.map(r =>
-        `・<b>${esc(r.name)}</b> 持續 ${r.dur}s → 爆發窗覆蓋 ${(r.cover * 100).toFixed(0)}%:${esc(fmtEff(r.eff, r.cover))}` +
-        (r.spill > 0
-          ? `;溢出平砍 ${(r.spill * 100).toFixed(1)}%:${esc(fmtEff(r.eff, r.spill))}`
-          : (r.dur > W ? ";溢出部分需填爆發占比才會計入" : ""))
+        `・<b>${esc(r.name)}</b> 持續 ${r.dur}s / CD ${r.cd}s → 每輪 ${r.n} 次` +
+        (r.loose ? "(不對軸,均勻分布)" : "") +
+        `<br>　　爆發窗覆蓋 ${(r.cover * 100).toFixed(1)}%:${esc(fmtEff(r.eff, r.cover))}` +
+        (r.spill > 0 ? `;平砍期 ${(r.spill * 100).toFixed(1)}%:${esc(fmtEff(r.eff, r.spill))}` : "")
       ).join("<br>");
   }
 
@@ -783,8 +790,8 @@ function statLabels(bk) {
 }
 // 爆發相關(獨立一列)
 const BURST_FIELDS = [
-  ["burst",    "估計爆發占比%(10~90)"],
-  ["burstSec", "爆發窗秒數(預設20)"],
+  ["burst",    "爆發期傷害占比%"],
+  ["burstSec", "爆發窗秒數"],
 ];
 // 首次載入的預設值
 const MANUAL_DEFAULTS = { burst: 50, burstSec: 20 };
@@ -797,7 +804,7 @@ const MANUAL_IMPACT = {
   mainUnique:  "不吃%的主屬(符文、悉法等)視為 0,裸值反推會偏高",
   minorPct:    "副屬裸值無法反推,「副屬 ±%」會直接乘面板值而偏高",
   minorUnique: "不吃%的副屬視為 0,裸值反推會偏高",
-  burst:       "爆發期加權失效,規範戒指/靈魂契約將完全不列入計算",
+  burst:       "爆發期加權失效,爆發專用技能(規範戒指/魂武/靈魂契約等)將不列入計算",
   hpReal:      "API 的 HP 上限為 50 萬,若實際血量更高會被低估(未超過 50 萬則可不填)",
 };
 // 有預設值或視情況才需填的欄位,不列入未填警告

@@ -96,38 +96,82 @@ section("乘區獨立性");
   ck("各乘區乘積 = total", r.total, Object.values(r.factors).reduce((x, y) => x * y, 1));
 }
 
-/* ---------- 兩段加權 ---------- */
+/* ---------- 兩段加權(q = 傷害占比)---------- */
 section("爆發期兩段加權");
 {
-  const P = 0.5;
+  const q = 0.5;
   const c = base.attack / (1 + base.attackPct), nA = base.attackPct + 0.85;
   const burst = { ...base, attackPct: nA, attack: c * (1 + nA), dmg: base.dmg + 0.65 };
-  const R = Engine.power(burst) / Engine.power(base);
 
-  ck("R = 各乘區乘積", R, ((1 + nA) / (1 + 1.87)) * ((1 + 0.84 + 0.65 + 6.25) / (1 + 0.84 + 6.25)));
-  ck("無變化 = 1", Engine.simulateWeighted(base, burst, {}, P).total, 1, 1e-12);
-  ck("p=0 退化為平時", Engine.simulateWeighted(base, burst, { boss: 0.3 }, 0).total,
+  ck("無變化 = 1", Engine.simulateWeighted(base, burst, {}, q).total, 1, 1e-12);
+  ck("q=0 退化為平時", Engine.simulateWeighted(base, burst, { boss: 0.3 }, 0).total,
      Engine.simulate(base, { boss: 0.3 }).total);
-  ck("p=1 退化為爆發", Engine.simulateWeighted(base, burst, { boss: 0.3 }, 1).total,
+  ck("q=1 退化為爆發", Engine.simulateWeighted(base, burst, { boss: 0.3 }, 1).total,
      Engine.simulate(burst, { boss: 0.3 }).total);
 
   const rn = Engine.simulate(base, { boss: 0.3 }).total, rb = Engine.simulate(burst, { boss: 0.3 }).total;
-  ck("加權公式", Engine.simulateWeighted(base, burst, { boss: 0.3 }, P).total,
-     (P * R * rb + (1 - P) * rn) / (P * R + (1 - P)));
-
-  // 交叉項:兩段加權 vs 舊「等效常駐」線性折算
-  const A = (1 + nA) / (1 + 1.87), B = (1 + 0.84 + 0.65 + 6.25) / (1 + 0.84 + 6.25);
-  const equivA = base.attackPct + 0.85 * P;
-  const oldEquiv = { ...base, attackPct: equivA, attack: c * (1 + equivA), dmg: base.dmg + 0.65 * P };
-  const rOld = Engine.power(oldEquiv) / Engine.power(base), rNew = P * R + (1 - P);
-  ck("交叉項 = (p−p²)(A−1)(B−1)", rNew - rOld, (P - P * P) * (A - 1) * (B - 1));
-  ck("兩段法基準較高", rNew > rOld ? 1 : 0, 1);
+  ck("加權 = q·r爆 + (1−q)·r平", Engine.simulateWeighted(base, burst, { boss: 0.3 }, q).total,
+     q * rb + (1 - q) * rn);
+  // 線性:對 q 的一階函數
+  ck("對 q 線性", Engine.simulateWeighted(base, burst, { boss: 0.3 }, 0.25).total,
+     0.25 * rb + 0.75 * rn);
 
   // 僅作用於爆發期的額外變化量
-  ck("burstExtra 空值", Engine.simulateWeighted(base, burst, {}, P, {}).total, 1, 1e-12);
-  const be = Engine.simulateWeighted(base, burst, {}, P, { dmg: 0.1 }).total;
-  const bc = Engine.simulateWeighted(base, burst, { dmg: 0.1 }, P).total;
+  ck("burstExtra 空值", Engine.simulateWeighted(base, burst, {}, q, {}).total, 1, 1e-12);
+  const be = Engine.simulateWeighted(base, burst, {}, q, { dmg: 0.1 }).total;
+  const bc = Engine.simulateWeighted(base, burst, { dmg: 0.1 }, q).total;
   ck("僅爆發期效益 < 常駐", be < bc ? 1 : 0, 1);
+
+  // R 僅供顯示,不參與加權
+  ck("R = 各乘區乘積", Engine.power(burst) / Engine.power(base),
+     ((1 + nA) / (1 + 1.87)) * ((1 + 0.84 + 0.65 + 6.25) / (1 + 0.84 + 6.25)));
+}
+
+/* ---------- 爆發技能覆蓋率 ---------- */
+section("爆發技能覆蓋率(週期 120s / 爆發窗 20s)");
+{
+  const C = 120, W = 20;
+  const cov = (d, cd, al = true) => Engine.skillCoverage(d, cd, W, C, al);
+
+  // 規範戒指:CD 120 → 每輪 1 次,持續 20s 完全落在窗內
+  let c = cov(20, 120);
+  ck("規範Lv6 次數", c.n, 1); ck("規範Lv6 窗內", c.cover, 1); ck("規範Lv6 平砍", c.spill, 0);
+  c = cov(15, 120);
+  ck("規範Lv4 窗內 15/20", c.cover, 0.75); ck("規範Lv4 無溢出", c.spill, 0);
+
+  // 靈魂鬥志:持續 40s > 窗 20s → 窗內滿額,多出 20s 落在平砍
+  c = cov(40, 120);
+  ck("魂武 窗內滿額", c.cover, 1);
+  ck("魂武 平砍 20/100", c.spill, 20 / 100);
+  ck("魂武 uptime 40/120", c.uptime, 40 / 120);
+
+  // 靈魂契約:CD 60 → 每輪 2 次,第 2 次整段在平砍期
+  c = cov(15, 60);
+  ck("靈魂契約 次數", c.n, 2);
+  ck("靈魂契約 窗內 15/20", c.cover, 0.75);
+  ck("靈魂契約 平砍 15/100", c.spill, 15 / 100);
+
+  // 一擊必殺對軸:CD 30 → 每輪 4 次,1 次在窗內、3 次在平砍
+  c = cov(4, 30);
+  ck("一擊必殺 次數", c.n, 4);
+  ck("對軸 窗內 4/20", c.cover, 0.2);
+  ck("對軸 平砍 12/100", c.spill, 12 / 100);
+
+  // 不對軸:均勻分布,窗內外皆等於總 uptime
+  c = cov(4, 30, false);
+  ck("不對軸 窗內 = uptime", c.cover, 16 / 120);
+  ck("不對軸 平砍 = uptime", c.spill, 16 / 120);
+
+  // 轉折點:窗 > 30s 第 2 次開始進入(部分重疊須精確計算)
+  ck("窗30s 仍 1 次", Engine.skillCoverage(4, 30, 30, C).cover * 30, 4);
+  ck("窗32s 部分重疊", Engine.skillCoverage(4, 30, 32, C).cover * 32, 6);
+  ck("窗34s 完整 2 次", Engine.skillCoverage(4, 30, 34, C).cover * 34, 8);
+
+  // 時間守恆:窗內秒數 + 平砍秒數 = 總觸發秒數
+  for (const [d, cd] of [[20, 120], [40, 120], [15, 60], [4, 30]]) {
+    const x = Engine.skillCoverage(d, cd, W, C);
+    ck(`守恆 ${d}s/${cd}s`, x.cover * W + x.spill * (C - W), x.n * d, 1e-9);
+  }
 }
 
 section("mergeDelta");

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>楓之谷TMS 裝備模擬計算機</title>
 <!-- 改版後請同步更新此處與下方 script 的 ?v= 版本號,否則瀏覽器會沿用舊快取 -->
-<link rel="stylesheet" href="css/style.css?v=1.4.0">
+<link rel="stylesheet" href="css/style.css?v=1.5.0">
 </head>
 <body>
 <div class="wrap">
@@ -91,7 +91,11 @@
     <div class="simgrid" id="manualGrid"></div>
     <div class="hint" id="derivedClear"></div>
 
-    <div style="margin:16px 0 6px;font-size:.85rem;color:var(--accent2)">爆發設定(供⑤的爆發技能換算使用)</div>
+    <div style="margin:16px 0 6px;font-size:.85rem;color:var(--accent2)">爆發設定(供爆發技能換算使用)</div>
+    <div class="buildnote">
+      <b>傷害占比</b>是職業特性:有些職業 20 秒能打完 70% 傷害,有些 30 秒只打 30%。
+      <b>爆發窗秒數</b>決定各爆發技能有多少比例落在爆發期內(依技能自身的持續與冷卻,對照固定的 120 秒爆發週期計算)。
+    </div>
     <div class="simgrid" id="burstGrid"></div>
     <div class="warn hidden" id="manualWarn"></div>
   </div>
@@ -100,8 +104,8 @@
   <div class="card hidden" id="cardBuff">
     <h2 id="hBuff"><span class="stepno"></span>Buff 加成 <span class="baseline-tag">面板為未吃 buff 狀態</span></h2>
     <div style="margin-bottom:10px;font-size:.85rem;color:var(--muted)">
-      勾選/填入等級後,加成會疊到⑤的基準值上,讓增幅以「實戰狀態」為分母計算,結果更接近實際體感。
-      非常駐技能(有冷卻)以原表的等效值計算。
+      勾選/填入等級後,加成會疊到基準值上,讓增幅以「實戰狀態」為分母計算,結果更接近實際體感。
+      有冷卻的爆發技能會依自身的持續與冷卻,精確算出落在爆發窗與平砍期的比例。
     </div>
     <div class="row" id="buffTabs" style="margin-bottom:8px"></div>
     <div class="hint" id="buffLimit" style="margin:0 0 10px"></div>
@@ -190,7 +194,7 @@
     <div id="planList" style="margin-top:12px"></div>
   </div>
 
-  <div class="foot">v1.4.0</div>
+  <div class="foot">v1.5.0</div>
 </div>
 
 <!-- 啟動診斷 -->
@@ -210,8 +214,8 @@
 </script>
 
 <!-- 依序載入:資料與引擎 → 主程式 -->
-<script src="js/engine.js?v=1.4.0"></script>
-<script src="js/data/buffs.js?v=1.4.0"></script>
-<script src="js/main.js?v=1.4.0"></script>
+<script src="js/engine.js?v=1.5.0"></script>
+<script src="js/data/buffs.js?v=1.5.0"></script>
+<script src="js/main.js?v=1.5.0"></script>
 </body>
 </html>

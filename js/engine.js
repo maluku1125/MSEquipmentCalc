@@ -158,26 +158,49 @@ const Engine = (() => {
   }
 
   /**
-   * 兩段加權模擬:爆發期(占比 p)與平時分別計算傷害後加權
-   *   總傷害 ∝ p × D_爆發 + (1-p) × D_平時
-   *   增幅 = [p·R·r_爆 + (1-p)·r_平] / [p·R + (1-p)],R = D_爆發/D_平時
-   * 這樣爆發專用 buff 之間的相乘效果只會落在爆發窗內,
-   * 不會像「等效常駐值」那樣把交叉項稀釋成 p²。
+   * 兩段加權模擬
+   *   q = 爆發期的「傷害占比」(職業特性,例如 20 秒打完 70% 傷害 → q = 0.7)
+   *   增幅 = q × r_爆發 + (1−q) × r_平時
+   * 因為 q 直接就是傷害權重,不需再推導傷害率倍率。
+   * 爆發專用 buff 之間的相乘效果只落在爆發窗內,
+   * 不會像「等效常駐值」那樣把交叉項稀釋成 q²。
+   *
+   *   burstExtra:僅作用於爆發期的額外變化量(例如爆發專用技能升級)
    */
-  //   burstExtra:僅作用於爆發期的額外變化量(例如爆發專用技能升級)
-  function simulateWeighted(normal, burst, delta, p, burstExtra) {
+  function simulateWeighted(normal, burst, delta, q, burstExtra) {
     const rn = simulate(normal, delta);
-    if (!burst || !(p > 0)) return { factors: rn.factors, total: rn.total, normal: rn, burst: null, R: 1 };
+    if (!burst || !(q > 0)) return { factors: rn.factors, total: rn.total, normal: rn, burst: null, R: 1 };
     const rb = simulate(burst, burstExtra ? mergeDelta(delta, burstExtra) : delta);
-    const R = power(burst) / power(normal);
-    const wOld = p * R + (1 - p);
-    const wNew = p * R * rb.total + (1 - p) * rn.total;
-    return { factors: rn.factors, total: wNew / wOld, normal: rn, burst: rb, R };
+    return {
+      factors: rn.factors,
+      total: q * rb.total + (1 - q) * rn.total,
+      normal: rn, burst: rb,
+      R: power(burst) / power(normal),   // 僅供顯示:爆發期與平時的傷害率倍率
+    };
+  }
+
+  /**
+   * 爆發技能的時間分布
+   *   dur   持續秒數 / cd 冷卻秒數 / W 爆發窗秒數 / C 爆發週期(預設 120)
+   *   aligned=true(對軸):第一次與爆發窗起點對齊,之後每 cd 秒一次
+   *   aligned=false(不對軸):觸發時機與爆發無關,視為均勻分布
+   * 回傳 { n 每輪次數, cover 窗內覆蓋率, spill 平砍覆蓋率, uptime 總佔比 }
+   */
+  function skillCoverage(dur, cd, W, C = 120, aligned = true) {
+    const n = Math.max(1, Math.floor(C / (cd || C)));
+    const uptime = Math.min((n * dur) / C, 1);
+    if (W <= 0 || W >= C) return { n, cover: uptime, spill: 0, uptime };
+    if (!aligned) return { n, cover: uptime, spill: uptime, uptime };
+    // 精確重疊:每次觸發區間 [t, t+dur) 與爆發窗 [0, W) 的交集
+    let inSec = 0;
+    for (let t = 0; t < C; t += (cd || C)) inSec += Math.max(0, Math.min(t + dur, W) - t);
+    const outSec = n * dur - inSec;
+    return { n, cover: Math.min(inSec / W, 1), spill: Math.min(outSec / (C - W), 1), uptime };
   }
 
   return { BUILDS, detectBuild, parseFinalStat, sumStats, attributePower,
            combineIgnore, defenseFactor, deriveClear, simulate, power,
-           simulateWeighted, mergeDelta, CRIT_BASE };
+           simulateWeighted, skillCoverage, mergeDelta, CRIT_BASE };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = { Engine };
